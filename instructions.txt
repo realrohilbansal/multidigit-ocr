@@ -1,0 +1,211 @@
+## **Instructions for Building Multi-Digit OCR Project**
+
+### **1. Project Setup**
+
+#### **1.1 Install Required Libraries**
+Use Python for this project, and install the necessary libraries:
+```bash
+pip install numpy opencv-python torch torchvision tensorflow
+```
+
+#### **1.2 Directory Structure**
+Create a structured folder for the project:
+```
+multi_digit_ocr/
+    ├── data/
+    │   ├── images/                # Store sample images
+    │   └── labels/                # Labels for training/testing
+    ├── models/                    # Trained models
+    ├── notebooks/                 # Optional: for experimentation
+    ├── scripts/
+    │   ├── preprocess.py          # Image preprocessing code
+    │   ├── segmentation.py        # Digit segmentation code
+    │   ├── train_cnn.py           # Code for training the CNN
+    │   ├── sequence_model.py      # Sequence model training
+    │   └── predict.py             # End-to-end prediction
+    └── instructions.txt           # This file (instructions)
+```
+
+---
+
+### **2. Data Preparation**
+
+#### **2.1 Use MNIST Dataset**
+- Download the MNIST dataset using PyTorch or TensorFlow.
+- This dataset is for recognizing individual digits.
+
+```python
+from torchvision import datasets, transforms
+train_data = datasets.MNIST('./data', train=True, download=True, transform=transforms.ToTensor())
+```
+
+#### **2.2 Generate Synthetic Multi-Digit Data**
+Since MNIST is for single digits, create multi-digit sequences:
+1. Combine 2–5 random MNIST digits into a single image.
+2. Use libraries like OpenCV or Pillow:
+   ```python
+   import cv2
+   import numpy as np
+   from random import randint
+
+   def create_sequence_image(digits, image_size=(128, 32)):
+       canvas = np.ones(image_size, dtype=np.uint8) * 255
+       x_offset = 5
+       for digit in digits:
+           digit_image = cv2.resize(digit, (28, 28))
+           canvas[2:30, x_offset:x_offset+28] = digit_image
+           x_offset += 32
+       return canvas
+   ```
+3. Save the images and their corresponding sequences as labels (e.g., "labels.txt").
+
+#### **2.3 Add Noise to Images**
+To simulate real-world handwriting, add random noise, distortions, or rotations:
+```python
+rows, cols = canvas.shape
+M = cv2.getRotationMatrix2D((cols/2, rows/2), randint(-10, 10), 1)
+distorted = cv2.warpAffine(canvas, M, (cols, rows))
+```
+
+---
+
+### **3. Image Preprocessing**
+
+#### **3.1 Preprocessing Pipeline**
+Write a `preprocess.py` script to:
+1. **Convert to Grayscale**:
+   ```python
+   gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+   ```
+2. **Apply Thresholding**:
+   ```python
+   _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+   ```
+3. **Remove Noise** (Optional):
+   ```python
+   kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+   clean = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+   ```
+
+#### **3.2 Segmentation**
+Use the `segmentation.py` script to separate digits:
+- Detect connected components or contours:
+   ```python
+   contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+   for contour in contours:
+       x, y, w, h = cv2.boundingRect(contour)
+       digit = binary[y:y+h, x:x+w]
+   ```
+
+- Sort contours left to right to preserve sequence order.
+
+#### **3.3 Save Segmented Digits**
+Store each segmented digit in temporary storage for recognition:
+```python
+cv2.imwrite(f"segment_{i}.png", digit)
+```
+
+---
+
+### **4. Model Development**
+
+#### **4.1 Train a CNN for Single Digits**
+Write `train_cnn.py` to train a CNN on the MNIST dataset:
+1. **Define the Model**:
+   ```python
+   class DigitRecognizer(nn.Module):
+       def __init__(self):
+           super(DigitRecognizer, self).__init__()
+           self.conv1 = nn.Conv2d(1, 32, 3)
+           self.conv2 = nn.Conv2d(32, 64, 3)
+           self.fc1 = nn.Linear(64 * 6 * 6, 128)
+           self.fc2 = nn.Linear(128, 10)
+       
+       def forward(self, x):
+           x = F.relu(self.conv1(x))
+           x = F.max_pool2d(F.relu(self.conv2(x)), 2)
+           x = x.view(-1, 64 * 6 * 6)
+           x = F.relu(self.fc1(x))
+           return self.fc2(x)
+   ```
+
+2. **Train the Model**:
+   - Use MNIST digits.
+   - Save the trained model (`models/digit_cnn.pth`).
+
+#### **4.2 Train a Sequence Model**
+Write `sequence_model.py` to train an OCR sequence model:
+1. **Architecture**:
+   - CNN (for feature extraction).
+   - RNN (e.g., LSTM or GRU) to handle sequential data.
+   - Fully Connected (FC) layer with Softmax.
+2. **Loss Function**:
+   - Use **CTC Loss** to align predicted sequences with ground truth.
+   ```python
+   ctc_loss = nn.CTCLoss()
+   ```
+3. **Training Pipeline**:
+   - Use synthetic multi-digit data created earlier.
+   - Save the trained model (`models/sequence_model.pth`).
+
+---
+
+### **5. Prediction Pipeline**
+
+#### **5.1 Combine All Steps**
+Write `predict.py` to:
+1. Preprocess the input image.
+2. Segment digits (if necessary).
+3. Use the CNN model for single digits or sequence model for multi-digit recognition.
+
+#### **5.2 Code Example**:
+```python
+from torchvision.transforms import ToTensor
+
+# Load models
+cnn_model = torch.load('models/digit_cnn.pth')
+seq_model = torch.load('models/sequence_model.pth')
+
+# Preprocess and segment
+image = cv2.imread("path_to_image.jpg")
+digits = segment_image(image)
+
+# Recognize digits
+results = []
+for digit in digits:
+    input_tensor = ToTensor()(digit).unsqueeze(0)
+    prediction = cnn_model(input_tensor)
+    results.append(prediction.argmax().item())
+
+# Output final sequence
+print("Recognized Sequence:", "".join(map(str, results)))
+```
+
+---
+
+### **6. Evaluation**
+
+#### **6.1 Metrics**
+1. **Accuracy**:
+   Compare predicted sequences with ground truth.
+2. **Edit Distance**:
+   Measure the difference between predictions and labels.
+
+#### **6.2 Test on Real Images**
+Test the pipeline on real handwritten images to evaluate generalization.
+
+---
+
+### **7. Report Findings**
+1. **Explain the Workflow**:
+   - Preprocessing, segmentation, recognition, sequence modeling.
+2. **Highlight Challenges**:
+   - Noise, overlapping digits, segmentation errors.
+3. **Show Results**:
+   - Accuracy and examples of success/failure cases.
+
+---
+
+### **8. Future Improvements**
+1. Train on diverse handwriting datasets for better generalization.
+2. Use a transformer-based architecture for end-to-end sequence recognition.
